@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <vector>
 #include <unordered_map>
+#include <optional>
 
 struct FileState {
     std::vector<uint8_t> buffer;
@@ -15,8 +16,9 @@ struct FileState {
 
 class FileCollector {
 public:
-    void CollectFile(uint32_t fieId, size_t fileSize);
-    void OneNewChunk (uint32_t fieId, size_t pos, std::vector<uint8_t>&& chunk);
-private:
+    void CollectFile(uint32_t fileId, size_t fileSize);
+    void OnNewChunk (uint32_t fileId, size_t pos, std::vector<uint8_t>&& chunk);
+    std::optional<std::vector<uint8_t>> GetFile (uint32_t fileId) const;
+    private:
     std::unordered_map<uint32_t, FileState> files;
 };

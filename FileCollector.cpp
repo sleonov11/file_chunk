@@ -12,7 +12,7 @@ void FileCollector::CollectFile(uint32_t fileId, size_t fileSize) {
     fs.completed = (fileSize == 0);
 }
 
-void FileCollector::OneNewChunk(uint32_t fileId, size_t pos, std::vector<uint8_t>&& chunk) {
+void FileCollector::OnNewChunk(uint32_t fileId, size_t pos, std::vector<uint8_t>&& chunk) {
     auto it = files.find(fileId);
     if (it == files.end()) return;
 
@@ -36,4 +36,10 @@ void FileCollector::OneNewChunk(uint32_t fileId, size_t pos, std::vector<uint8_t
     }
 
     fs.completed = fs.filledCount == fs.fileSize;
+}
+
+std::optional<std::vector<uint8_t>> FileCollector::GetFile (uint32_t fileId) const {
+    auto it = files.find(fileId);
+    if (it == files.end() || !it->second.completed) return std::nullopt;
+    return it->second.buffer;
 }
