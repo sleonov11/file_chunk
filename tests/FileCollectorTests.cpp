@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "FileCollector.hpp"
+#include <thread>
 
 namespace {
 std::vector<uint8_t> bytes(std::initializer_list<uint8_t> il) {
@@ -128,4 +129,28 @@ TEST(FileCollector, IndependentFilesDoNotInterfere) {
     ASSERT_TRUE(fc.GetFile(2).has_value());
     EXPECT_EQ(*fc.GetFile(1), bytes({1, 2}));
     EXPECT_EQ(*fc.GetFile(2), bytes({7, 8, 9}));
+}
+
+TEST(FileCollector, MyOwnTest) {
+    FileCollector fc;
+    fc.CollectFile(1, 16);
+    fc.OnNewChunk(1, 0, bytes({1,2,3,4,5}));
+    fc.OnNewChunk(1,4,bytes({5,6,4,6,42,18}));
+    fc.OnNewChunk(1, 10, bytes({1,2,3,4,5,6}));
+    ASSERT_TRUE(fc.GetFile(1).has_value());
+    EXPECT_EQ(*fc.GetFile(1), bytes({1,2,3,4,5,6,4,6,42,18,1,2,3,4,5,6}));
+}
+
+TEST(FileCollectorMt, ConcurrentChunksOneFile) {
+    FileCollector fc;
+    fc.CollectFile(1, 1000);
+    std::vector<std::thread> ts;
+    for (int t = 0; t < 8; ++t) {
+        ts.emplace_back([&, t] {
+            for (size_t p = t; p < 1000; p += 8)
+                fc.OnNewChunk(1, p, std::vector<uint8_t>{uint8_t(p)});
+        });
+    }
+    for (auto& t : ts) t.join();
+    EXPECT_TRUE(fc.GetFile(1).has_value());
 }

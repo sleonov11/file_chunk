@@ -4,42 +4,64 @@
 #include <algorithm>
 
 void FileCollector::CollectFile(uint32_t fileId, size_t fileSize) {
-    FileState& fs = files[fileId];
-    fs.fileSize = fileSize;
-    fs.buffer.assign(fileSize, 0);
-    fs.filled.assign(fileSize, false);
-    fs.filledCount = 0;
-    fs.completed = (fileSize == 0);
+    FileState* fsp;
+    {
+    std::unique_lock<std::shared_mutex> slock(smtx);
+    fsp = &files[fileId];
+    }
+    std::lock_guard<std::mutex> lock(fsp->mtx);
+    fsp->fileSize = fileSize;
+    fsp->buffer.assign(fileSize, 0);
+    fsp->filled.assign(fileSize, false);
+    fsp->filledCount = 0;
+    fsp->cached.reset();
+    fsp->completed = (fileSize == 0);
+    if (fsp->completed) fsp->cached = std::make_shared<const std::vector<uint8_t>>();
 }
 
 void FileCollector::OnNewChunk(uint32_t fileId, size_t pos, std::vector<uint8_t>&& chunk) {
+    FileState* fsp;
+    {
+    std::shared_lock<std::shared_mutex> slock(smtx);
     auto it = files.find(fileId);
+    
     if (it == files.end()) return;
-
-    FileState& fs = it->second;
-
-    if (fs.completed) return;
+    
+    fsp = &it->second;
+    }
+    std::lock_guard<std::mutex> lock(fsp->mtx);
+    if (fsp->completed) return;
 
     if (chunk.size() == 0) return;
-    if (pos >= fs.fileSize) return;
+    if (pos >= fsp->fileSize) return;
 
-    size_t len = std::min(chunk.size(), fs.fileSize - pos);
+    size_t len = std::min(chunk.size(), fsp->fileSize - pos);
     
-    
-    memcpy(fs.buffer.data() + pos, chunk.data(), len);
+    std::memcpy(fsp->buffer.data() + pos, chunk.data(), len);
 
     size_t endPos = len + pos;
     for (size_t i = pos; i < endPos; ++i) {
-        uint8_t wasNotFilled = !fs.filled[i];
-        fs.filledCount += wasNotFilled;
-        fs.filled[i] = true;
+        uint8_t wasNotFilled = !fsp->filled[i];
+        fsp->filledCount += wasNotFilled;
+        fsp->filled[i] = true;
     }
 
-    fs.completed = fs.filledCount == fs.fileSize;
+    fsp->completed = fsp->filledCount == fsp->fileSize;
+    if (fsp->completed) {
+        fsp->cached = std::make_shared<const std::vector<uint8_t>>(std::move(fsp->buffer));
+    }
 }
 
-std::optional<std::vector<uint8_t>> FileCollector::GetFile (uint32_t fileId) const {
-    auto it = files.find(fileId);
-    if (it == files.end() || !it->second.completed) return std::nullopt;
-    return it->second.buffer;
+std::shared_ptr<const std::vector<uint8_t>> FileCollector::GetFile (uint32_t fileId) const {
+    const FileState* fsp;
+    {
+        std::shared_lock<std::shared_mutex> slock(smtx);
+        auto it = files.find(fileId);
+        if (it == files.end()) return nullptr;
+        fsp = &(it->second);
+    }
+    std::lock_guard<std::mutex> lock(fsp->mtx);
+    if (!fsp->completed || !fsp->cached) return nullptr;
+
+    return fsp->cached;
 }
