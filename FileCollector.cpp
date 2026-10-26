@@ -65,3 +65,26 @@ std::shared_ptr<const std::vector<uint8_t>> FileCollector::GetFile (uint32_t fil
 
     return fsp->cached;
 }
+
+std::optional<std::vector<uint8_t>> FileCollector::GetPartFile (uint32_t fileId, size_t offset, size_t size) const{
+    const FileState* fsp; 
+    {
+        std::shared_lock<std::shared_mutex> slock(smtx);
+        auto it = files.find(fileId);
+        if (it == files.end()) return std::nullopt;
+        fsp = &(it -> second);
+    }
+    
+    if (size == 0) return std::vector<uint8_t>{};
+
+    std::lock_guard<std::mutex> lock(fsp->mtx);
+    if (offset > fsp->fileSize || size > fsp->fileSize - offset) return std::nullopt;
+
+    for (size_t i = offset; i < size + offset; ++i) {
+        if (!fsp->filled[i]) return std::nullopt;
+    }
+
+    const std::vector<uint8_t>& src = (fsp->completed) ? *fsp->cached : fsp->buffer;
+    
+    return std::vector<uint8_t>(src.begin() + offset, src.begin() + offset + size);
+}

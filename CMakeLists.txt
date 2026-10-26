@@ -7,14 +7,27 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(FILECOLLECTOR_BUILD_TESTS "Build unit tests" ON)
 option(FILECOLLECTOR_SANITIZE    "Enable ASan+UBSan" OFF)
+option(FILECOLLECTOR_TSAN        "Enable ThreadSanitizer" OFF)
+
+if(FILECOLLECTOR_SANITIZE AND FILECOLLECTOR_TSAN)
+    message(FATAL_ERROR
+        "FILECOLLECTOR_SANITIZE (ASan+UBSan) and FILECOLLECTOR_TSAN cannot be enabled together")
+endif()
 
 add_library(filecollector STATIC FileCollector.cpp)
 target_include_directories(filecollector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(filecollector PRIVATE -Wall -Wextra -Wpedantic)
 
 if(FILECOLLECTOR_SANITIZE)
-    target_compile_options(filecollector PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_compile_options(filecollector PUBLIC
+        -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(filecollector PUBLIC -fsanitize=address,undefined)
+endif()
+
+if(FILECOLLECTOR_TSAN)
+    target_compile_options(filecollector PUBLIC
+        -fsanitize=thread -fno-omit-frame-pointer)
+    target_link_options(filecollector PUBLIC -fsanitize=thread)
 endif()
 
 if(FILECOLLECTOR_BUILD_TESTS)
