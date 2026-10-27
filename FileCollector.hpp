@@ -11,12 +11,12 @@
 
 struct FileState {
     std::vector<uint8_t> buffer;
-    std::vector<uint8_t> filled; // TODO: change to vector<uint64_t> and hand adress arithmetic;
-    size_t fileSize = 0;
-    size_t filledCount = 0;
-    mutable std::mutex mtx;
+    std::vector<uint8_t> filled; // TODO: change to vector<uint64_t> (bitset) and hand adress arithmetic;
+    size_t fileSize {0};
+    size_t filledCount {0};
+    mutable std::shared_mutex mtx;
     std::shared_ptr<const std::vector<uint8_t>> cached;
-    bool completed = false;
+    bool completed {false};
 };
 
 class FileCollector {

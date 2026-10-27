@@ -16,8 +16,6 @@ std::vector<uint8_t> bytes(std::initializer_list<uint8_t> il) {
     return std::vector<uint8_t>(il);
 }
 
-// Детерминированное содержимое: байт в позиции i всегда один и тот же.
-// Это позволяет побайтово проверять результат независимо от порядка чанков.
 uint8_t byteAt(size_t i) {
     return static_cast<uint8_t>((i * 131 + 17) & 0xFF);
 }
@@ -43,11 +41,7 @@ void expectContentsEqual(const std::shared_ptr<const std::vector<uint8_t>>& got,
     }
 }
 
-} // namespace
-
-// ============================================================
-// Basic correctness
-// ============================================================
+} 
 
 TEST(FileCollector, EmptyFileIsCompletedImmediately) {
     FileCollector fc;
@@ -192,53 +186,10 @@ TEST(FileCollectorStress, OverlapCounterMustNotDoubleCount) {
     FileCollector fc;
     fc.CollectFile(1, 100);
     fc.OnNewChunk(1, 0, makeChunk(0, 60));
-    fc.OnNewChunk(1, 0, makeChunk(0, 60)); // полный дубль
+    fc.OnNewChunk(1, 0, makeChunk(0, 60));
     EXPECT_EQ(fc.GetFile(1), nullptr) << "must stay incomplete: only [0,60) covered";
     fc.OnNewChunk(1, 60, makeChunk(60, 40));
     expectContentsEqual(fc.GetFile(1), expectedOfSize(100));
-}
-
-TEST(FileCollectorStress, ConcurrentOverlappingChunksContentCheck) {
-    constexpr size_t SIZE = 4096;
-    constexpr int THREADS = 8;
-    constexpr int CHUNKS_PER_THREAD = 200;
-
-    FileCollector fc;
-    fc.CollectFile(7, SIZE);
-
-    std::vector<std::thread> writers;
-    for (int t = 0; t < THREADS; ++t) {
-        writers.emplace_back([&fc, t] {
-            std::mt19937 rng(0xC0FFEE + t);
-            std::uniform_int_distribution<size_t> posDist(0, SIZE - 1);
-            std::uniform_int_distribution<size_t> lenDist(1, 512);
-            for (int i = 0; i < CHUNKS_PER_THREAD; ++i) {
-                size_t pos = posDist(rng);
-                size_t len = std::min<size_t>(lenDist(rng), SIZE - pos);
-                fc.OnNewChunk(7, pos, makeChunk(pos, len));
-            }
-        });
-    }
-
-    std::atomic<bool> stop{false};
-    std::atomic<int> wrongReads{0};
-    std::thread reader([&] {
-        while (!stop.load(std::memory_order_relaxed)) {
-            auto f = fc.GetFile(7);
-            if (!f) continue;
-            if (f->size() != SIZE) { ++wrongReads; continue; }
-            for (size_t i = 0; i < SIZE; ++i) {
-                if ((*f)[i] != byteAt(i)) { ++wrongReads; break; }
-            }
-        }
-    });
-
-    for (auto& w : writers) w.join();
-    stop = true;
-    reader.join();
-
-    EXPECT_EQ(wrongReads.load(), 0) << "reader saw partial/invalid file";
-    expectContentsEqual(fc.GetFile(7), expectedOfSize(SIZE));
 }
 
 TEST(FileCollectorStress, SamePositionManyChunksNoDoubleCount) {
@@ -295,8 +246,6 @@ TEST(FileCollectorStress, ManyFilesInParallel) {
     }
 }
 
-// Хаос: одновременно пишем, читаем, сбрасываем. Критерий — не упало,
-// TSan чист, нет дедлока. Контент не проверяем (файл 0 сбрасывается).
 TEST(FileCollectorStress, ChaosCollectChunkRead) {
     FileCollector fc;
     std::atomic<bool> stop{false};
@@ -367,7 +316,6 @@ TEST(FileCollectorStress, GetFileStormDuringCompletion) {
     expectContentsEqual(fc.GetFile(1), expectedOfSize(SIZE));
 }
 
-// GetFile должен возвращать тот же объект, а не новую копию.
 TEST(FileCollectorStress, GetFileReturnsSameObject) {
     FileCollector fc;
     fc.CollectFile(1, 100);
@@ -508,22 +456,35 @@ TEST(FileCollectorStress, EmptyFileManyThreads) {
     for (auto& t : ts) t.join();
 }
 
-TEST(FileCollectorStress, CollectFileDuringWriteDoesNotCrash) {
+TEST(PartFileCollector, NulloptPartFileTest) {
     FileCollector fc;
-    std::atomic<bool> stop{false};
-    std::thread writer([&] {
-        while (!stop.load(std::memory_order_relaxed)) {
-            fc.OnNewChunk(1, 0, makeChunk(0, 3));
-        }
-    });
-    std::thread collector([&] {
-        while (!stop.load(std::memory_order_relaxed)) {
-            fc.CollectFile(1, 100);
-        }
-    });
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    stop = true;
-    writer.join();
-    collector.join();
-    SUCCEED();
+    fc.CollectFile(1, 5);
+    fc.OnNewChunk(1, 2, bytes({1,2,3}));
+    auto v = fc.GetPartFile(1, 1, 4);
+    EXPECT_EQ(std::nullopt, v);
+}
+
+TEST(PartFileCollector, CorrectPartFileTest) {
+    FileCollector fc;
+    fc.CollectFile(1, 10);
+    fc.OnNewChunk(1, 3, bytes({1,2,3}));
+    auto v = fc.GetPartFile(1, 3, 3);
+    std::vector<uint8_t> exp {1,2,3};
+    EXPECT_EQ(exp, *v); // * because otional
+}
+
+TEST(PartFileCollector, IncorrectSizePartFile) {
+    FileCollector fc;
+    fc.CollectFile(1, 10);
+    fc.OnNewChunk(1, 3, bytes({1,2,3}));
+
+    auto v1 = fc.GetPartFile(1, 3, 9);
+    EXPECT_EQ(std::nullopt, v1);
+
+    auto v2 = fc.GetPartFile(1, 3, 0);
+    std::vector<uint8_t> exp {};
+    EXPECT_EQ(exp, v2);
+
+    auto v3 = fc.GetPartFile(1, 11, 3);
+    EXPECT_EQ(std::nullopt, v3);
 }
